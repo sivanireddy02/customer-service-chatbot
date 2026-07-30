@@ -9,7 +9,7 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()  # take environment variables from .env (especially openai api key)
+load_dotenv()
 
 # Create Google Palm LLM model
 llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0.1)

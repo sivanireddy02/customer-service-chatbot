@@ -17,8 +17,7 @@ if upload_file and not st.session_state.kb_updated:
     merged_ds.to_csv("dataset/dataset.csv",index=False)
     with st.spinner("Updating KnowledgeBase.Please wait"):
             create_vector_db()
-    st.success(f"KnowledgeBase updated successfully\n\n"
-               f"Total FAQ's:{len(merged_ds)}")
+    st.success("KnowledgeBase updated successfully")
     st.session_state.kb_updated=True
 
 question = st.text_input("Question: ")
