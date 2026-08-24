@@ -1,12 +1,16 @@
 import os
 import streamlit as st
-from langchain_helper import get_qa_chain, create_vector_db
+from langchain_helper import (get_qa_chain, create_vector_db, analyze_image,analyze_image_with_context, decide_input_type)
 import pandas as pd
-
+from PIL import Image
 if "kb_updated" not in st.session_state:
-     st.session_state.kb_updated=False
+     if"messages" not in st.session_state:
+       st.session_state.messages=[]
 st.title(" CUSTOMER SERVICE CHATBOT 🤖")
-
+upload_image = st.file_uploader("Upload an Image", type=["jpg", "jpeg", "png"])
+if upload_image:
+    image = Image.open(upload_image)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 upload_file=st.file_uploader("Upload FAQ CSV", type=["csv"],on_change=lambda:st.session_state.update(kb_updated=False))
 
 if upload_file and not st.session_state.kb_updated:
@@ -21,13 +25,29 @@ if upload_file and not st.session_state.kb_updated:
     st.session_state.kb_updated=True
 
 question = st.text_input("Question: ")
-
+input_type=decide_input_type(question,upload_image is not None)
 if question:
-    if not os.path.exists("faiss_index"):
-        st.error("Please create KnowledgeBase first")
-    else:
-        chain = get_qa_chain()
-        response = chain.invoke({"input":question})
-
-        st.header("Answer")
-        st.write(response["answer"])
+    st.session_state.messages.append({"role":"user","content":question})
+if question:
+     input_type=decide_input_type(
+          question, upload_image is not None
+     )
+     if input_type=="image_and_text":
+          response=analyze_image_with_context(image, question, st.session_state.messages)
+          st.header("Answer")
+          st.write(response)
+          st.session_state.messages.append({"role":"assistant","content":response})
+     elif input_type=="image":
+          response=analyze_image(image,question,st.session_state.messages)
+          st.header("Answer")
+          st.write(response)
+          st.session_state.messages.append({"role":"assistant","content":response})
+     else:
+          if not os.path.exists("faiss_index"):
+            st.error("Please create KnowledgeBase first")
+          else:
+            chain = get_qa_chain()
+            response = chain.invoke({"input": question})
+            st.header("Answer")
+            st.write(response["answer"])
+            st.session_state.messages.append({"role":"assistant","content":response["answer"]})

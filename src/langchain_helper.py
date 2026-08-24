@@ -6,37 +6,95 @@ from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 import os
-
 from dotenv import load_dotenv
-
+from google import genai
 load_dotenv()
+client=genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0)
 
-# Create Google Palm LLM model
-llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0.1)
-# # Initialize instructor embeddings using the Hugging Face model
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 vectordb_file_path = "faiss_index"
 
+def analyze_image(image, question,history):
+    prompt="""
+You are a multimodal AI assistant.
 
+Use the image and conversation history to answer the user's question.
+
+Rules:
+1. Only provide information that can be supported by the image or conversation.
+2. If the image does not contain enough information, say:
+   "I don't have enough information in the image to answer that."
+3. If the question is ambiguous, ask the user to clarify.
+4. Do not invent objects, text, facts, or details that are not visible or provided.
+5. Give a concise and evidence-based answer.
+
+Conversation history:
+"""
+    for msg in history:
+        prompt+=f"{msg['role']}:{msg['content']}\n"
+    prompt+=f"user:{question}"
+    response=client.models.generate_content(model="gemini-3.6-flash",contents=[prompt, image])
+    answer=response.text
+    if not answer or not answer.strip():
+        return "I couldn't generate a reliable answer from provided information"
+    return answer
+def analyze_image_with_context(image, question, history):
+    chain = get_qa_chain()
+    rag_response = chain.invoke({"input": question})
+    context = rag_response["answer"]
+    prompt = """
+You are a multimodal customer-service AI assistant.
+Use BOTH:
+1. The information retrieved from the FAQ knowledge base.
+2. The uploaded image.
+3. The conversation history.
+Answer the user's question using the available evidence.
+Rules:
+- Do not invent information.
+- If the image and FAQ information do not provide enough evidence, say so.
+- If the question is ambiguous, ask for clarification.
+- Clearly distinguish information visible in the image from information obtained from the FAQ.
+- Give a concise, evidence-based answer.
+FAQ INFORMATION:
+"""
+    prompt += context
+    prompt += "\n\nCONVERSATION HISTORY:\n"
+    for msg in history:
+        prompt += f"{msg['role']}: {msg['content']}\n"
+    prompt += f"\nCURRENT QUESTION: {question}"
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=[prompt, image]
+    )
+    answer = response.text
+    if not answer or not answer.strip():
+        return "I couldn't generate a reliable answer from the available information."
+    return answer
+def decide_input_type(question,has_image):
+    if has_image and question:
+        return "image_and_text"
+    if has_image:
+        return "image"
+    return "text"
 def create_vector_db():
-    # Load data from FAQ sheet
+    
     loader = CSVLoader(file_path="dataset/dataset.csv", source_column="prompt")
     data = loader.load()
 
-    # Create a FAISS instance for vector database from 'data'
+  
     vectordb = FAISS.from_documents(documents=data, embedding=embeddings)
 
-    # Save vector database locally
     vectordb.save_local(vectordb_file_path)
 
 
 def get_qa_chain():
-    # Load the vector database from the local folder
+    
     vectordb = FAISS.load_local(vectordb_file_path, embeddings, allow_dangerous_deserialization=True)
 
-    # Create a retriever for querying the vector database
+    
     retriever = vectordb.as_retriever(search_kwargs={"k" : 3})
 
     prompt_template = """Given the following context and a question, generate an answer based on this context only.
@@ -45,7 +103,7 @@ def get_qa_chain():
 
     CONTEXT: {context}
 
-    QUESTION: {input}"""
+    question: {input}"""
 
     PROMPT = PromptTemplate(
         template=prompt_template, input_variables=["context", "input"]
