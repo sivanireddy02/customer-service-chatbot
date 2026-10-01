@@ -1,11 +1,15 @@
 import os
+os.environ["USE_TF"] = "0"
+os.environ["USE_TORCH"] = "1"
+os.environ["TRANSFORMERS_NO_TF"] = "1"
 import streamlit as st
-from langchain_helper import (get_qa_chain, create_vector_db, analyze_image,analyze_image_with_context, decide_input_type)
+from langchain_helper import (get_qa_chain, create_vector_db, analyze_image,analyze_image_with_context, decide_input_type, analyze_sentiment, adapt_response_to_sentiment)
 import pandas as pd
 from PIL import Image
 if "kb_updated" not in st.session_state:
-     if"messages" not in st.session_state:
-       st.session_state.messages=[]
+     st.session_state.kb_updated=False
+if"messages" not in st.session_state:
+     st.session_state.messages=[]
 st.title(" CUSTOMER SERVICE CHATBOT 🤖")
 upload_image = st.file_uploader("Upload an Image", type=["jpg", "jpeg", "png"])
 if upload_image:
@@ -27,27 +31,63 @@ if upload_file and not st.session_state.kb_updated:
 question = st.text_input("Question: ")
 input_type=decide_input_type(question,upload_image is not None)
 if question:
-    st.session_state.messages.append({"role":"user","content":question})
+    sentiment = analyze_sentiment(question)
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question,
+        "sentiment": sentiment
+    })
 if question:
      input_type=decide_input_type(
           question, upload_image is not None
      )
      if input_type=="image_and_text":
-          response=analyze_image_with_context(image, question, st.session_state.messages)
-          st.header("Answer")
-          st.write(response)
-          st.session_state.messages.append({"role":"assistant","content":response})
+       response = analyze_image_with_context(
+          image, question, st.session_state.messages
+       )
+       response = adapt_response_to_sentiment(
+          question, response, sentiment
+       )
+       st.header("Answer")
+       st.write(response)
+       st.session_state.messages.append({
+         "role": "assistant",
+         "content": response
+       })
      elif input_type=="image":
-          response=analyze_image(image,question,st.session_state.messages)
-          st.header("Answer")
-          st.write(response)
-          st.session_state.messages.append({"role":"assistant","content":response})
+       response = analyze_image(
+         image, question, st.session_state.messages
+       )
+       response = adapt_response_to_sentiment(
+         question, response, sentiment
+       )
+       st.header("Answer")
+       st.write(response)
+       st.session_state.messages.append({
+         "role": "assistant",
+         "content": response
+       })
      else:
           if not os.path.exists("faiss_index"):
             st.error("Please create KnowledgeBase first")
           else:
             chain = get_qa_chain()
             response = chain.invoke({"input": question})
+            answer = response["answer"]
+            answer = adapt_response_to_sentiment(
+              question,
+              answer,
+              sentiment
+            )
             st.header("Answer")
-            st.write(response["answer"])
-            st.session_state.messages.append({"role":"assistant","content":response["answer"]})
+            st.write(answer)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": answer
+            })
+st.subheader("Conversation History")
+for message in st.session_state.messages:
+    if message["role"] == "user":
+        st.write("You:", message["content"])
+    else:
+        st.write("Assistant:", message["content"])

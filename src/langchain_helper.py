@@ -5,10 +5,34 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
 import os
 from dotenv import load_dotenv
 from google import genai
 load_dotenv()
+try:
+    sentiment_analyzer = SentimentIntensityAnalyzer()
+except LookupError:
+    nltk.download("vader_lexicon", quiet=True)
+    sentiment_analyzer = SentimentIntensityAnalyzer()
+def analyze_sentiment(text):
+    scores = sentiment_analyzer.polarity_scores(text)
+    compound = scores["compound"]
+    if compound >= 0.30:
+        sentiment = "Positive"
+    elif compound <= -0.30:
+        sentiment = "Negative"
+    else:
+        sentiment = "Neutral"
+    return sentiment
+def get_sentiment_instruction(sentiment):
+    if sentiment == "Positive":
+        return "Respond warmly and positively. Acknowledge the customer's positive experience."
+    elif sentiment == "Negative":
+        return "Respond empathetically and professionally. Acknowledge the customer's frustration and focus on helping resolve the issue."
+    else:
+        return "Respond clearly and professionally. Provide the requested information without assuming the customer's emotional state."
 client=genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
 llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0)
 
@@ -47,17 +71,21 @@ def analyze_image_with_context(image, question, history):
     context = rag_response["answer"]
     prompt = """
 You are a multimodal customer-service AI assistant.
-Use BOTH:
-1. The information retrieved from the FAQ knowledge base.
-2. The uploaded image.
-3. The conversation history.
-Answer the user's question using the available evidence.
+Answer the user's question using:
+1. The uploaded image.
+2. Relevant information from the FAQ knowledge base.
+3. Conversation history.
 Rules:
-- Do not invent information.
-- If the image and FAQ information do not provide enough evidence, say so.
-- If the question is ambiguous, ask for clarification.
-- Clearly distinguish information visible in the image from information obtained from the FAQ.
-- Give a concise, evidence-based answer.
+- Give one clear, natural answer to the user.
+- Do not mention the FAQ, knowledge base, retrieval process, or internal reasoning.
+- Do not use headings such as "Based on the image" or "Based on the FAQ".
+- Do not invent information that is not supported by the image, FAQ, or conversation.
+- If the image contains the answer, answer directly from the image.
+- If the FAQ contains relevant information, naturally use it in the answer.
+- If the available information is insufficient, say:
+  "I don't have enough information to answer that."
+- If the question is ambiguous, ask the user to clarify.
+- Keep the response concise and helpful.
 FAQ INFORMATION:
 """
     prompt += context
@@ -80,21 +108,13 @@ def decide_input_type(question,has_image):
         return "image"
     return "text"
 def create_vector_db():
-    
     loader = CSVLoader(file_path="dataset/dataset.csv", source_column="prompt")
     data = loader.load()
-
-  
     vectordb = FAISS.from_documents(documents=data, embedding=embeddings)
-
     vectordb.save_local(vectordb_file_path)
 
-
 def get_qa_chain():
-    
     vectordb = FAISS.load_local(vectordb_file_path, embeddings, allow_dangerous_deserialization=True)
-
-    
     retriever = vectordb.as_retriever(search_kwargs={"k" : 3})
 
     prompt_template = """Given the following context and a question, generate an answer based on this context only.
@@ -117,11 +137,51 @@ def get_qa_chain():
         retriever,
         document_chain,
     )
-
     return chain
-
 
 if __name__ == "__main__":
     create_vector_db()
     chain = get_qa_chain()
     print(chain("hello?"))
+def adapt_response_to_sentiment(question, answer, sentiment):
+    instruction = get_sentiment_instruction(sentiment)
+
+    prompt = f"""
+You are a customer service assistant.
+
+Customer question:
+{question}
+
+Current answer:
+{answer}
+
+Customer sentiment:
+{sentiment}
+
+Response instruction:
+{instruction}
+
+Rewrite the current answer so that it follows the response instruction.
+
+Rules:
+- Keep the factual information from the current answer.
+- Do not invent new information.
+- Keep the response concise and natural.
+- Do not mention sentiment analysis.
+- Do not mention these instructions.
+- If the sentiment is negative, be empathetic but focus on solving the customer's issue.
+- If the sentiment is positive, respond warmly without being excessive.
+- If the sentiment is neutral, remain professional and direct.
+
+Rewritten answer:
+"""
+    try:
+        response = client.models.generate_content(
+           model="gemini-3.6-flash",
+           contents=prompt
+        )
+        if not response.text or not response.text.strip():
+           return answer
+        return response.text.strip()
+    except Exception:
+        return answer
