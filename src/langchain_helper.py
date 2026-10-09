@@ -1,3 +1,7 @@
+import os
+os.environ["USE_TF"] = "0"
+os.environ["USE_TORCH"] = "1"
+os.environ["TRANSFORMERS_NO_TF"] = "1"
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.document_loaders.csv_loader import CSVLoader
@@ -5,17 +9,105 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
-import os
 from dotenv import load_dotenv
 from google import genai
-load_dotenv()
+from lingua import Language, LanguageDetectorBuilder
+import argostranslate.translate
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
 try:
     sentiment_analyzer = SentimentIntensityAnalyzer()
 except LookupError:
     nltk.download("vader_lexicon", quiet=True)
     sentiment_analyzer = SentimentIntensityAnalyzer()
+
+load_dotenv()
+language_detector = LanguageDetectorBuilder.from_languages(
+    Language.ENGLISH,
+    Language.HINDI,
+    Language.SPANISH,
+    Language.FRENCH
+).build()
+def detect_language(text):
+    detected_language = language_detector.detect_language_of(text)
+    if detected_language == Language.HINDI:
+        return "Hindi"
+    elif detected_language == Language.SPANISH:
+        return "Spanish"
+    elif detected_language == Language.FRENCH:
+        return "French"
+    elif detected_language == Language.ENGLISH:
+        return "English"
+    else:
+        return "Unknown"
+
+def detect_languages(text):
+    detected_segments = language_detector.detect_multiple_languages_of(text)
+    language_codes = {
+        Language.ENGLISH: "English",
+        Language.HINDI: "Hindi",
+        Language.SPANISH: "Spanish",
+        Language.FRENCH: "French"
+    }
+    return [
+        {
+            "start": segment.start_index,
+            "end": segment.end_index,
+            "language": language_codes.get(segment.language, "Unknown")
+        }
+        for segment in detected_segments
+    ]
+def translate_mixed_to_english(text):
+    detected_segments = language_detector.detect_multiple_languages_of(text)
+    language_codes = {
+        Language.ENGLISH: "English",
+        Language.HINDI: "Hindi",
+        Language.SPANISH: "Spanish",
+        Language.FRENCH: "French"
+    }
+    translated_parts = []
+    for segment in detected_segments:
+        segment_text = text[segment.start_index:segment.end_index]
+        language = language_codes.get(segment.language, "Unknown")
+
+        if language == "English" or language == "Unknown":
+            translated_parts.append(segment_text)
+        else:
+            translated_parts.append(
+                translate_to_english(segment_text, language)
+            )
+    return " ".join(translated_parts)
+def translate_to_english(text, language):
+    language_codes = {
+        "Hindi": "hi",
+        "Spanish": "es",
+        "French": "fr",
+        "English": "en"
+    }
+    source_code = language_codes.get(language)
+    if not source_code or source_code == "en":
+        return text
+    return argostranslate.translate.translate(
+        text,
+        source_code,
+        "en"
+    )
+
+def translate_from_english(text, language):
+    language_codes = {
+        "Hindi": "hi",
+        "Spanish": "es",
+        "French": "fr",
+        "English": "en"
+    }
+    target_code = language_codes.get(language)
+    if not target_code or target_code == "en":
+        return text
+    return argostranslate.translate.translate(
+        text,
+        "en",
+        target_code
+    )
 def analyze_sentiment(text):
     scores = sentiment_analyzer.polarity_scores(text)
     compound = scores["compound"]
@@ -113,20 +205,34 @@ def create_vector_db():
     vectordb = FAISS.from_documents(documents=data, embedding=embeddings)
     vectordb.save_local(vectordb_file_path)
 
-def get_qa_chain():
+def get_qa_chain(history=""):
     vectordb = FAISS.load_local(vectordb_file_path, embeddings, allow_dangerous_deserialization=True)
     retriever = vectordb.as_retriever(search_kwargs={"k" : 3})
 
-    prompt_template = """Given the following context and a question, generate an answer based on this context only.
-    In the answer try to provide as much text as possible from "response" section in the source document context without making much changes.
-    If the answer is not found in the context, kindly state "I don't know." Don't try to make up an answer.
+    prompt_template = """Given the following conversation history, context, and question, generate an answer based on the context only.
+       Use the conversation history to understand references, follow-up questions, and the user's intent.
+       In the answer try to provide as much text as possible from the "response" section in the source document context without making much changes.
+       If the answer is not found in the context, kindly state "I don't know." Don't try to make up an answer.
+       Rules:
+       - Answer the user's question directly and naturally.
+       - Use the conversation history only to understand the meaning of the current question.
+       - Do not mention the conversation history, context, or retrieval process.
+       - Do not say "According to the context", "Based on the context", "According to the provided information", or similar phrases.
+       - Do not explain your reasoning.
+       - Preserve the factual information from the response section.
+       - If the answer is not found in the context, say "I don't know."
 
-    CONTEXT: {context}
+       CONVERSATION HISTORY:
+       {history}
 
-    question: {input}"""
+       CONTEXT:
+       {context}
+
+       QUESTION:
+       {input}"""
 
     PROMPT = PromptTemplate(
-        template=prompt_template, input_variables=["context", "input"]
+        template=prompt_template, input_variables=["context", "input", "history"]
     )
 
     document_chain = create_stuff_documents_chain(
@@ -185,3 +291,4 @@ Rewritten answer:
         return response.text.strip()
     except Exception:
         return answer
+
