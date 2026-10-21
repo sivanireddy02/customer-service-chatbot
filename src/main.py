@@ -3,13 +3,18 @@ os.environ["USE_TF"] = "0"
 os.environ["USE_TORCH"] = "1"
 os.environ["TRANSFORMERS_NO_TF"] = "1"
 import streamlit as st
-from src.langchain_helper import (get_qa_chain, create_vector_db, analyze_image,analyze_image_with_context, decide_input_type, analyze_sentiment, adapt_response_to_sentiment, detect_language, translate_to_english, translate_mixed_to_english, translate_from_english)
+from src.langchain_helper import (get_qa_chain, create_vector_db, refresh_vector_db_if_changed, analyze_image,analyze_image_with_context, decide_input_type, analyze_sentiment, adapt_response_to_sentiment, get_sentiment_instruction, detect_language, translate_to_english, translate_mixed_to_english, translate_from_english)
 import pandas as pd
 from PIL import Image
 if "kb_updated" not in st.session_state:
      st.session_state.kb_updated=False
 if"messages" not in st.session_state:
      st.session_state.messages=[]
+try:
+    if refresh_vector_db_if_changed():
+        st.toast("Knowledge base refreshed.")
+except Exception as exc:
+    st.error(f"Knowledge-base refresh failed: {exc}")
 st.title(" CUSTOMER SERVICE CHATBOT 🤖")
 upload_image = st.file_uploader("Upload an Image", type=["jpg", "jpeg", "png"])
 if upload_image:
@@ -32,6 +37,7 @@ question = st.text_input("Question: ")
 input_type=decide_input_type(question,upload_image is not None)
 if question:
     sentiment = analyze_sentiment(question)
+    st.write("Detected sentiment:", sentiment)
     detected_language = detect_language(question)
     st.session_state.messages.append({
         "role": "user",
@@ -67,7 +73,8 @@ if question:
        st.write(response)
        st.session_state.messages.append({
          "role": "assistant",
-         "content": response
+         "content": response,
+         "language": detected_language
        })
      else:
           if not os.path.exists("faiss_index"):
@@ -87,7 +94,8 @@ if question:
 
              role = "User" if message["role"] == "user" else "Assistant"
              conversation_history += f"{role}: {message_text}\n"
-            chain = get_qa_chain(conversation_history)
+            sentiment_instruction = get_sentiment_instruction(sentiment)
+            chain = get_qa_chain(conversation_history, sentiment)
 
             retrieval_question = (
               conversation_history
@@ -95,8 +103,9 @@ if question:
             )
 
             response = chain.invoke({
-               "input": retrieval_question,
-               "history": conversation_history
+              "input": retrieval_question,
+              "history": conversation_history,
+              "sentiment_instruction": sentiment_instruction
             })
             answer = response["answer"]
             answer = translate_from_english(
