@@ -5,12 +5,12 @@ Users can ask questions about courses, internships, and customer service through
 
 ## Project Highlights
 
-- Answering questions based on frequently asked questions: the knowledge source is a CSV file which contains customer-service questions and answers.
+- **Answering questions based on frequently asked questions:** the knowledge source is a CSV file which contains customer-service questions and answers.
 - **Semantic search:** Retrievess relevant FAQ information by using Sentence Transformers and FAISS.
 - **Knowledge-base refresh:** The vector index is refreshed whenever the application runs, provided that there have been changes to the FAQ dataset.
 - **Sentiment-aware responses:** The system makes use of VADER sentiment analysis in order to adjust its responses according to whether the customer's message is positive, negative, or neutral.
 - **Multilingual support:** The text includes facilities for detecting the language and translating it into English, Hindi, Spanish, and French.
-- For questions based on images: it makes use of the vision-capable language model that has been configured.
+- **For questions based on images:** it makes use of the vision-capable language model that has been configured.
 - **Interactive interface:** The interface has been developed using Streamlit so that access to the chatbot is simple.
 
 ## Technology Stack
